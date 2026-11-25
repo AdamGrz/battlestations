@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battle Stations!</title>
+<style>
+:root{--bg:#eef2f6;--card:#fff;--ink:#16202c;--mut:#5b6b7c;--line:#c9d3dd;--acc:#1b2a41;--hi:#fff3c4;--y:#c98f00;--b:#1f3fd0;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1720;--card:#1a2431;--ink:#e6edf4;--mut:#93a4b6;--line:#2c3a4a;--acc:#9db8d6;--hi:#3a3420;--y:#f0b429;--b:#7a93ff;color-scheme:dark}}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.w{max-width:1350px;margin:0 auto;padding:14px}.hide{display:none!important}
+h1{margin:0 0 6px;font-size:26px;letter-spacing:.04em;color:var(--acc)}h2{margin:14px 0 6px;font-size:15px;color:var(--acc)}
+.mut{color:var(--mut)}.cols{display:grid;gap:12px;grid-template-columns:1fr 1fr}
+@media(max-width:760px){.cols{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px}
+.lane{display:grid;grid-template-columns:26px 1fr 92px;gap:6px;align-items:center;margin:3px 0;padding:2px 4px;border-radius:8px;border:2px solid transparent;cursor:pointer}
+.lane.sel{border-color:var(--y);background:var(--hi)}.lane.flash{border-color:#d33;background:var(--hi)}
+.lane b{text-align:center;color:var(--mut)}
+.plate{background:#fff;border:1px solid var(--line);border-radius:6px;height:40px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 6px;overflow:hidden;color:#778}
+.ab{font-weight:700;font-size:12px;color:#334;min-width:22px;text-align:right}
+.q{font-size:22px;font-weight:700;color:#556}.sh{flex:1;min-width:0;max-width:calc(100% - 30px);max-height:36px;object-fit:contain}
+.tks{display:flex;gap:3px;align-items:center}.tk{width:24px;height:24px}
+.chip{font-size:11px;font-weight:700;text-transform:uppercase;color:#a00}.chip.evaded{color:#06a}.chip.survived{color:#a60}.chip.atk{color:var(--mut)}
+button,input,select{font:inherit;padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+button{cursor:pointer}button.on{background:var(--acc);color:var(--card);border-color:var(--acc)}button:disabled{opacity:.45;cursor:default}
+.tools{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:center}
+.big{font-size:18px;font-weight:700;padding:10px;border-radius:8px;background:var(--hi);margin:8px 0}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.row .plate{width:112px;height:30px}.row .sh{max-height:26px}
+#list .row{margin:4px 0}
+.main{display:grid;grid-template-columns:250px 1fr;gap:12px;align-items:start}.main.nolog{grid-template-columns:1fr}
+#log{max-height:80vh;overflow:auto;font-size:12.5px;position:sticky;top:8px}#log div{padding:1px 0;border-bottom:1px solid var(--line)}#log .lh{font-weight:700;color:var(--acc);margin-top:6px}
+.leg{font-size:12px;color:var(--mut);margin:8px 0}
+@media(max-width:900px){.main{grid-template-columns:1fr}#log{order:2;max-height:240px;position:static}}.o{color:var(--y);font-weight:700}.bl{color:var(--b);font-weight:700}
+</style></head><body><div class="w">
+<h1>BATTLE STATIONS!</h1>
+<div id="lobby" class="card">
+ <div class="tools"><input id="name" placeholder="Your name" maxlength="16"><button id="rules">Rules (PDF)</button></div>
+ <h2>Open games</h2><div id="list"></div>
+ <div class="tools"><button id="create">Create game</button><label><input type="checkbox" id="priv"> Private (join by code only)</label></div>
+ <div class="tools"><input id="code" placeholder="Game code" maxlength="6" size="8"><button id="join">Join by code</button></div>
+ <p id="msg" class="mut"></p></div>
+<div id="ui" class="hide"><p id="status" class="mut"></p><div class="main" id="main"><aside id="log" class="card"></aside><div id="game"></div></div></div>
+</div>
+<script>
+const N=['Submarine','Destroyer','Missile Destroyer','Light Cruiser','Battlecruiser','Battleship','Frigate'],PTS=[1,1,3,2,3,2,1],COL=['Yellow','Blue'];
+const $=s=>document.querySelector(s),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const AB=['S','D','MD','LC','BC','B','F'];
+const img=(s,t)=>`<img class="sh" alt="${N[t]}" title="${N[t]}" src="img/${s?'b':'y'}${t}.jpg"><span class="ab" title="${N[t]}">${AB[t]}</span>`,tok=k=>`<img class="tk" alt="${k}" src="img/${k}.jpg">`;
+const blank=()=>({swap:[-1,-1],f1:-1,f2:-1,ev:-1,t1:-1,t2:-1});
+const swp=(b,s)=>{b=[...b];if(s[0]>=0&&s[1]>=0)[b[s[0]],b[s[1]]]=[b[s[1]],b[s[0]]];return b};
+let id,tok_,es,game=null,seat=0,ord=blank(),tool='f1',sel=-1,lastTurn=0,hint='';
+const post=async(p,b)=>(await fetch('/api/'+p,{method:'POST',body:JSON.stringify(b)})).json();
+const act=async b=>{const r=await post('act',{id,token:tok_,...b});if(r.error){hint=r.error;render()}return r};
+
+// ---- network ----
+function connect(){if(es)es.close();es=new EventSource(`/api/events?id=${id}&token=${tok_}`);
+ es.onmessage=e=>{game=JSON.parse(e.data);seat=game.you;
+  if(game.turn!==lastTurn){lastTurn=game.turn;ord=blank();tool='f1';hint='';sel=-1}
+  render()};
+ es.onerror=async()=>{if(es.readyState!==2)return;const r=await post('act',{id,token:tok_,op:'ping'}).catch(()=>null);
+  if(r&&r.error==='Game not found'){delete localStorage['bs'+id];location.href=location.pathname;return}setTimeout(connect,2000)}}
+function enter(r){if(r.error){$('#msg').textContent=r.error;return}id=r.id;tok_=r.token;localStorage['bs'+id]=tok_;location.hash=id;
+ $('#lobby').classList.add('hide');$('#ui').classList.remove('hide');connect()}
+const getName=()=>{const v=$('#name').value.trim();if(!v){$('#msg').textContent='Enter your name first';$('#name').focus();return null}localStorage.bsName=v;return v};
+$('#name').value=localStorage.bsName||'';
+$('#create').onclick=async()=>{const name=getName();if(!name)return;enter(await post('create',{name,priv:$('#priv').checked}))};
+async function joinGame(c){c=String(c||'').trim().toUpperCase();if(!c){$('#msg').textContent='Enter a game code';return}
+ if(localStorage['bs'+c])return enter({id:c,token:localStorage['bs'+c]}); // your own game / reconnect
+ const name=getName();if(!name)return;const r=await post('join',{id:c,name});if(r.error)refreshLobby();enter(r)}
+$('#join').onclick=()=>joinGame($('#code').value);
+function renderLobby(list){const box=$('#list');box.textContent='';
+ if(!list.length){const d=document.createElement('div');d.className='mut';d.textContent='No open games right now — create one below.';box.append(d);return}
+ for(const g of list){const row=document.createElement('div'),nm=document.createElement('b'),bt=document.createElement('button'),mine=!!localStorage['bs'+g.id];
+  row.className='row';nm.textContent=g.name+(mine?' (you)':'');bt.textContent=mine?'Rejoin':'Join';bt.onclick=()=>joinGame(g.id);row.append(nm,bt);box.append(row)}}
+async function refreshLobby(){if($('#lobby').classList.contains('hide'))return;try{renderLobby((await (await fetch('/api/lobby',{cache:'no-store'})).json()).games||[])}catch{}}
+refreshLobby();setInterval(refreshLobby,3000);
+$('#rules').onclick=()=>window.open('rules/BATTLE_STATIONS.pdf','_blank');
+const h=location.hash.slice(1).toUpperCase();if(h){$('#code').value=h;if(localStorage['bs'+h])enter({id:h,token:localStorage['bs'+h]})}
+
+// ---- rendering ----
+const list=(s,a)=>a.length?a.map(t=>`<div class="plate">${img(s,t)}</div>`).join(''):'<span class="mut">none yet</span>';
+const lane=(attr,i,plate,tks,cls='')=>`<div class="lane ${cls}" ${attr}="${i}"><b>${i+1}</b><div class="plate">${plate}</div><div class="tks">${tks}</div></div>`;
+const LEG='<div class="leg">'+N.map((n,i)=>AB[i]+' = '+n).join(' · ')+'</div>';
+function render(){
+ const g=$('#game'),G=game;if(!G)return;const opp=1-seat,names=G.names.map(esc),mine=COL[seat];
+ $('#log').classList.toggle('hide',G.status==='waiting');$('#main').classList.toggle('nolog',G.status==='waiting');
+ if(G.status!=='waiting'){const lg=$('#log');lg.innerHTML='<h2 style="margin-top:0">Log</h2>'+G.log.map(l=>`<div class="${l.h?'lh':''}">${esc(l.t)}</div>`).join('');lg.scrollTop=lg.scrollHeight}
+ if(G.status==='waiting'){$('#status').textContent='';
+  g.innerHTML=`<div class="card"><h2>Waiting for an opponent…</h2><p>Game code: <b>${G.id}</b> — send them this page’s link (it ends in #${G.id}) or let them pick your game in the lobby.</p></div>`;return}
+ const results=G.status!=='setup'&&!!G.rep;
+ $('#status').textContent=`Game ${G.id} · You are ${mine} (${names[seat]}) vs ${COL[opp]} (${names[opp]||'?'}${G.online[opp]?'':' – offline'})`+(G.status==='play'?(results?` · Turn ${G.turn-1} results`:` · Turn ${G.turn}`):'');
+ if(G.status==='setup'){
+  g.innerHTML=`<div class="card"><h2>Arrange your fleet (click two lanes to swap)</h2>${G.board.map((t,i)=>lane('data-s',i,img(seat,t),'',sel===i?'sel':'')).join('')}
+  <div class="tools"><button data-act="shuf" ${G.ready[seat]?'disabled':''}>Shuffle</button><button data-act="ready" ${G.ready[seat]?'disabled':''}>${G.ready[seat]?'Ready – waiting for opponent':'Ready'}</button></div>
+  <p class="mut">${esc(hint)||(G.ready[opp]?'Opponent is ready.':'Opponent is arranging their fleet.')}</p></div>${LEG}`;return}
+ const over=G.status==='over',locked=!!G.mine,cur=locked?G.mine:ord,vb=swp(G.board,cur.swap),shots=results?G.rep:[];
+ const ov={},add=(key,c,t,x,cls)=>{const o=ov[key];if(o){if(o.t<0)o.t=t,o.c=c;o.x.push(x);o.cls=cls==='atk'?o.cls:cls}else ov[key]={c,t,x:[x],cls}};
+ for(const r of shots){const q=1-r.p;add(r.p+'_'+r.L,r.p,r.a,'Fire '+r.k,'atk');add(q+'_'+r.T,q,r.d,r.res,r.res)}
+ const chips=o=>o.x.map((x,i)=>`<span class="chip ${i&&o.cls?o.cls:'atk'}">${x}</span>`).join(' ');
+ const ownRow=(t,i)=>{const o=ov[seat+'_'+i];if(o)return lane('data-m',i,o.t>=0?img(o.c,o.t):'<span>empty</span>',chips(o),'flash');
+  return lane('data-m',i,t>=0?img(seat,t):'<span>empty</span>',(cur.f1===i?tok('f1'):'')+(cur.f2===i?tok('f2'):'')+(cur.ev===i?tok('ev'):''),sel===i?'sel':'')};
+ const enRow=(occ,j)=>{const o=ov[opp+'_'+j];if(o)return lane('data-e',j,o.t>=0?img(o.c,o.t):'<span>empty</span>',chips(o),'flash');
+  const known=G.efull?G.efull[j]:-1,pl=known>=0?img(opp,known):occ?'<span class="q">?</span>':'<span>empty</span>';
+  return lane('data-e',j,pl,(cur.t1===j?tok('f1'):'')+(cur.t2===j?tok('f2'):''))};
+ const T=(k,l,d)=>`<button data-tool="${k}" class="${tool===k?'on':''}" ${d?'disabled':''}>${l}</button>`,sc=p=>G.des[p].reduce((s,t)=>s+PTS[t],0);
+ const summary=shots.length?shots.map(r=>`Fire ${r.k}: ${r.p===seat?'your':'enemy'} ${N[r.a]} (L${r.L+1}) → ${r.d>=0?N[r.d]:'empty lane'} (L${r.T+1}): <b>${r.res}</b>`).join('<br>'):'No shots were fired.';
+ let top='';
+ if(over)top=`<div class="big">${G.winner<0?'Draw.':G.winner===seat?'You win!':'You lose.'} ${esc(G.why)}.</div><div class="card">${summary}</div>`;
+ else if(results)top=`<div class="card"><b>Turn ${G.turn-1} results</b><br>${summary}<div class="tools">${G.proceed[seat]?'<span class="mut">Waiting for your opponent to press Proceed…</span>':'<button data-act="proceed" class="on">Proceed</button>'}${G.proceed[opp]&&!G.proceed[seat]?'<span class="mut">Opponent is ready to proceed.</span>':''}</div></div>`;
+ else if(locked)top=`<p class="mut">Orders locked. ${G.locked[opp]?'Resolving…':'Waiting for opponent…'} <button data-act="unlock">Unlock</button></p>`;
+ else top=`<div class="tools">${T('swap','Swap ships',G.turn<2)}${T('f1','Fire 1')}${T('f2','Fire 2')}${T('ev',`Evasion (${G.ev[seat]} left)`,G.ev[seat]<1)}<button data-act="clear">Clear</button><button data-act="lock" class="on">Lock orders</button></div>
+  <p class="mut">${esc(hint)||'Pick a tool, click your lane, then (for Fire) click an enemy lane to aim.'}${G.locked[opp]?' Opponent has locked in.':''}</p>`;
+ g.innerHTML=top+`<div class="cols"><div class="card"><h2 style="margin-top:0">Your fleet (${mine})</h2>${vb.map(ownRow).join('')}</div>
+ <div class="card"><h2 style="margin-top:0">Enemy lanes (${COL[opp]})</h2>${G.enemy.map(enRow).join('')}</div></div>${LEG}
+ <h2>Enemy ships you’ve destroyed · ${sc(seat)} pts</h2><div class="card"><div class="row">${list(opp,G.des[seat])}</div></div>
+ <h2>Your ships lost · ${sc(opp)} pts for the enemy</h2><div class="card"><div class="row">${list(seat,G.des[opp])}</div></div>`}
+
+$('#game').addEventListener('click',async ev=>{
+ const t=ev.target.closest('[data-s],[data-m],[data-e],[data-tool],[data-act]');if(!t||!game)return;const d=t.dataset,G=game;
+ if(G.status==='setup'){if(G.ready[seat])return;
+  if(d.s!==undefined){const i=+d.s;if(sel<0){sel=i;render()}else{const b=[...G.board];[b[sel],b[i]]=[b[i],b[sel]];sel=-1;await act({op:'board',board:b})}}
+  else if(d.act==='shuf'){const b=[...G.board];for(let i=11;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]]}await act({op:'board',board:b})}
+  else if(d.act==='ready')await act({op:'ready'});return}
+ if(G.status!=='play')return;
+ if(d.act==='proceed'){await act({op:'proceed'});return}
+ if(d.act==='unlock'){await act({op:'unlock'});return}
+ if(G.mine||G.phase!=='orders')return;
+ if(d.tool){if(d.tool==='swap'&&ord.swap[0]>=0){ord=blank();tool='swap';sel=-1;hint='Swap cancelled and tokens cleared. Pick two ships to swap.'}else{tool=d.tool;sel=-1;hint=''}render()}
+ else if(d.m!==undefined){const i=+d.m,vb=swp(G.board,ord.swap);
+  if(tool==='swap'){if(ord.swap[0]>=0){hint='A swap is already set – click “Swap ships” again to cancel it.';render();return}
+   if(G.board[i]<0)return;if(sel<0)sel=i;else if(sel!==i){ord=blank();ord.swap=[sel,i];sel=-1;tool='f1';hint='Ships swapped (tokens cleared) – now place your tokens on the new positions.'}else sel=-1}
+  else{if(vb[i]<0)return;const k=tool;if(ord[k]===i){ord[k]=-1;if(k[0]==='f')ord['t'+k[1]]=-1}
+   else{['f1','f2','ev'].forEach(x=>{if(ord[x]===i){ord[x]=-1;if(x[0]==='f')ord['t'+x[1]]=-1}});ord[k]=i;hint=k==='ev'?'':'Now click an enemy lane to aim Fire '+k[1]+'.'}}
+  render()}
+ else if(d.e!==undefined){if(tool[0]==='f'&&ord[tool]>=0){ord['t'+tool[1]]=+d.e;hint='';render()}}
+ else if(d.act==='clear'){ord=blank();sel=-1;hint='';render()}
+ else if(d.act==='lock'){for(const k of[1,2])if(ord['f'+k]>=0&&ord['t'+k]<0){hint='Aim Fire '+k+' at an enemy lane first.';render();return}
+  hint='';await act({op:'lock',orders:ord})}});
+</script></body></html>
